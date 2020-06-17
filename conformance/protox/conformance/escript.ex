@@ -5,13 +5,6 @@ defmodule Protox.Conformance.Escript do
   # It reads a conformance test request on its standard input and outputs
   # the test results on the standard output.
 
-  use Protox,
-    files: [
-      "./conformance/protox/conformance/conformance.proto",
-      "./conformance/protox/conformance/test_messages_proto2.proto",
-      "./conformance/protox/conformance/test_messages_proto3.proto"
-    ]
-
   def main(_args) do
     run()
   end
@@ -52,20 +45,13 @@ defmodule Protox.Conformance.Escript do
   end
 
   defp handle_request(
-         {
-           :ok,
-           req = %Conformance.ConformanceRequest{
-             requested_output_format: :PROTOBUF,
-             payload: {:protobuf_payload, _}
-           }
+         req = %Conformance.ConformanceRequest{
+           requested_output_format: :PROTOBUF,
+           payload: {:protobuf_payload, _}
          },
          log_file
        ) do
     IO.binwrite(log_file, "Will parse protobuf\n")
-
-    if Conformance.ConformanceRequest.unknown_fields(req) != [] do
-      IO.binwrite(log_file, "Warning, request contains unknown fields\n")
-    end
 
     IO.binwrite(log_file, "#{inspect(req)}\n")
 
@@ -86,25 +72,25 @@ defmodule Protox.Conformance.Escript do
           ProtobufTestMessages.Proto3.TestAllTypesProto3
       end
 
-    case proto_type.decode(payload) do
-      {:ok, msg} ->
-        IO.binwrite(log_file, "Parse: success.\n")
-        IO.binwrite(log_file, "Message: #{inspect(msg, limit: :infinity)}\n")
-        encoded_payload = msg |> Protox.Encode.encode!() |> :binary.list_to_bin()
-        IO.binwrite(log_file, "Encoded payload: #{inspect(encoded_payload, limit: :infinity)}\n")
-        %Conformance.ConformanceResponse{result: {:protobuf_payload, encoded_payload}}
-
-      {:error, reason} ->
-        IO.binwrite(log_file, "Parse error: #{inspect(reason)}\n")
+    try do
+      msg = proto_type.decode(payload)
+      IO.binwrite(log_file, "Parse: success.\n")
+      IO.binwrite(log_file, "Message: #{inspect(msg, limit: :infinity)}\n")
+      encoded_payload = msg.__struct__.encode(msg)
+      IO.binwrite(log_file, "Encoded payload: #{inspect(encoded_payload, limit: :infinity)}\n")
+      %Conformance.ConformanceResponse{result: {:protobuf_payload, encoded_payload}}
+    rescue
+      e ->
+        IO.binwrite(log_file, "Parse error: #{inspect(e)}\n")
 
         %Conformance.ConformanceResponse{
-          result: {:parse_error, "Parse error: #{inspect(reason)}"}
+          result: {:parse_error, "Parse error: #{inspect(e)}"}
         }
     end
   end
 
   # All JSON and TEXT related tests are skipped.
-  defp handle_request({:ok, req}, log_file) do
+  defp handle_request(req, log_file) do
     skip_reason =
       case {req.requested_output_format, req.payload} do
         {:UNSPECIFIED, _} ->
@@ -132,14 +118,6 @@ defmodule Protox.Conformance.Escript do
     %Conformance.ConformanceResponse{result: {:skipped, "SKIPPED"}}
   end
 
-  defp handle_request({:error, reason}, log_file) do
-    IO.binwrite(log_file, "ConformanceRequest parse error: #{inspect(reason)}\n")
-
-    %Conformance.ConformanceResponse{
-      result: {:parse_error, "Parse error: #{inspect(reason)}"}
-    }
-  end
-
   defp dump_data(data, log_file) do
     IO.binwrite(log_file, "Received #{inspect(data, limit: :infinity)}\n")
     data
@@ -151,7 +129,7 @@ defmodule Protox.Conformance.Escript do
   end
 
   defp make_message_bytes(msg) do
-    data = msg |> Protox.Encode.encode!() |> :binary.list_to_bin()
+    data = msg.__struct__.encode(msg)
     <<byte_size(data)::unsigned-little-32, data::binary>>
   end
 end
